@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gamepad and Keyboard Test</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <div class="serial-connection">
+    <button id="connect-serial" class="connect-btn">Connect Arduino</button>
+    <div id="serial-status">Not Connected</div>
+  </div>
+
+  <h1>Combined Gamepad and Keyboard Test</h1>
+  <div>running: <span id="running"></span></div>
+  <div id="gamepads"></div>
+
+  <div class="controls-container">
+    <div class="controls">
+      <!-- WASD Keys -->
+      <div class="wasd">
+        <div class="key" id="key-w">W</div>
+        <div class="key" id="key-a">A</div>
+        <div class="key" id="key-s">S</div>
+        <div class="key" id="key-d">D</div>
+      </div>
+
+      <!-- Arrow Keys -->
+      <div class="arrows">
+        <div class="key" id="key-up">↑</div>
+        <div class="key" id="key-left">←</div>
+        <div class="key" id="key-down">↓</div>
+        <div class="key" id="key-right">→</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,201 @@
+/* Gamepad styling */
+html, body {
+  overflow: hidden; /* Disable scrolling */
+  height: 100%; /* Ensure content takes up full height */
+}
+
+body {
+  background: linear-gradient(135deg, #808080, #2f2f2f); /* Diagonal gradient from grey to dark grey */
+  color: white;
+  font-family: monospace;
+  height: 100vh; /* Full viewport height */
+}
+
+#gamepads>* {
+  background: #333;
+  padding: 1em;
+  margin: 10px 5px 0 0;
+}
+
+#gamepads pre {
+  white-space: pre-wrap;
+}
+
+.head {
+  display: flex;
+}
+
+.head .id {
+  flex: 1 1 auto;
+}
+
+.head .index,
+.head .id {
+  display: inline-block;
+  background: #222;
+  padding: 0.5em;
+}
+
+.info .label {
+  width: 7em;
+  display: inline-block;
+}
+
+.info>div {
+  padding: 0.25em;
+  background: #222;
+  margin: 0.25em 0.25em 0 0;
+}
+
+.inputs {
+  display: flex;
+}
+
+.axes {
+  display: flex;
+  align-items: flex-start;
+}
+
+.svg text {
+  color: #CCC;
+  font-family: monospace;
+}
+
+.axes svg text {
+  font-size: 0.6px;
+}
+
+.buttons svg text {
+  font-size: 1.2px;
+}
+
+.axes>div, .buttons>div {
+  display: inline-block;
+  background: #222;
+}
+
+.axes>div {
+  margin: 2px 5px 0 0;
+}
+
+.buttons>div {
+  margin: 2px 2px 0 0;
+}
+
+/* Serial connection styles */
+.serial-connection {
+  background-color: #333;
+  padding: 10px;
+  margin: 10px auto;
+  border-radius: 5px;
+  width: 300px;
+  text-align: center;
+}
+
+.connect-btn {
+  background-color: #4CAF50;
+  border: none;
+  color: white;
+  padding: 10px 20px;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+  font-size: 16px;
+  margin: 4px 2px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.3s;
+}
+
+.connect-btn:hover {
+  background-color: #45a049;
+}
+
+#serial-status {
+  margin-top: 5px;
+  font-weight: bold;
+}
+
+/* Keyboard control styling */
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+
+.controls-container {
+  margin-top: 20px;
+  width: 40%;
+  margin-left: auto;
+  margin-right: auto;
+  display: flex;
+  justify-content: center;
+}
+
+.controls {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  align-items: center;
+}
+
+.wasd, .arrows {
+  display: grid;
+  grid-template-rows: 40px 40px;
+  grid-template-columns: 40px 40px 40px;
+  gap: 3px;
+}
+
+.wasd .key:nth-child(1) { 
+  grid-row: 1;
+  grid-column: 2; /* W in the first row, centered */
+}
+
+.wasd .key:nth-child(2) { 
+  grid-row: 2;
+  grid-column: 1; /* A */
+}
+
+.wasd .key:nth-child(3) { 
+  grid-row: 2;
+  grid-column: 2; /* S */
+}
+
+.wasd .key:nth-child(4) { 
+  grid-row: 2;
+  grid-column: 3; /* D */
+}
+
+.arrows .key:nth-child(1) { 
+  grid-row: 1;
+  grid-column: 2; /* UP arrow in the first row, centered */
+}
+
+.arrows .key:nth-child(2) { 
+  grid-row: 2;
+  grid-column: 1; /* LEFT */
+}
+
+.arrows .key:nth-child(3) { 
+  grid-row: 2;
+  grid-column: 2; /* DOWN */
+}
+
+.arrows .key:nth-child(4) { 
+  grid-row: 2;
+  grid-column: 3; /* RIGHT */
+}
+
+.key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #333;
+  color: white;
+  width: 40px;
+  height: 40px;
+  border-radius: 5px;
+  font-family: 'Roboto', sans-serif;
+  font-size: 18px;
+  transition: background-color 0.2s ease;
+}
+
+.key.active {
+  background-color: #d3d3d3; /* Light grey highlight */
+}
