@@ -7,16 +7,17 @@ const gamepadsByIndex = {};
 // Serial connection variables
 let serialPort = null;
 let serialWriter = null;
+let serialReader = null;
 let serialConnected = false;
 const AXIS_THRESHOLD = 0.20; // 20% movement to trigger direction
 let lastDirection = null;
 let lastCommandTime = 0;
 const MIN_COMMAND_INTERVAL = 100; // ms between commands
 
-// Current dot position tracking (no edge detection needed with wrap-around)
-let currentPosition = {
-  x: 0,
-  y: 0
+// Current snake position tracking
+let snakePosition = {
+  headX: 0,
+  headY: 0
 };
 
 // Input states
@@ -27,16 +28,22 @@ let inputStates = {
   right: false
 };
 
+// Keyboard tracking
+const pressedKeys = new Set();
+let keyboardPollingInterval = null;
+const KEY_POLLING_RATE = 50; // Poll keyboard every 50ms (20 times per second)
+
 // Serial connection functions
 async function connectToSerial() {
-  console.log('Attempting to connect to Arduino via Serial...');
-  
+  // If already connected, disconnect first
   if (serialConnected) {
     await disconnectFromSerial();
     return;
   }
   
   try {
+    console.log('Attempting to connect to Arduino via Serial...');
+    
     // Request port access from the user
     serialPort = await navigator.serial.requestPort();
     
@@ -47,8 +54,7 @@ async function connectToSerial() {
     // Create writer for output
     const textEncoder = new TextEncoder();
     const writableStream = serialPort.writable;
-    const writer = writableStream.getWriter();
-    serialWriter = writer;
+    serialWriter = writableStream.getWriter();
     
     // Setup reader for incoming messages
     setupSerialReader();
@@ -66,7 +72,7 @@ async function connectToSerial() {
 }
 
 async function setupSerialReader() {
-  if (!serialPort) {
+  if (!serialPort || !serialPort.readable) {
     console.error('No serial port available for reading');
     return;
   }
@@ -74,13 +80,13 @@ async function setupSerialReader() {
   const textDecoder = new TextDecoder();
   let readBuffer = '';
   
-  try {
-    while (serialPort.readable) {
-      const reader = serialPort.readable.getReader();
+  while (serialPort && serialPort.readable) {
+    try {
+      serialReader = serialPort.readable.getReader();
       
       try {
         while (true) {
-          const { value, done } = await reader.read();
+          const { value, done } = await serialReader.read();
           if (done) {
             console.log('Serial reader closed');
             break;
@@ -104,29 +110,26 @@ async function setupSerialReader() {
       } catch (error) {
         console.error('Error reading from serial port:', error);
       } finally {
-        reader.releaseLock();
+        serialReader.releaseLock();
       }
+    } catch (error) {
+      console.error('Serial port reading error:', error);
+      break;
     }
-  } catch (error) {
-    console.error('Serial port reading error:', error);
   }
-  
-  console.log('Serial reader setup completed');
 }
 
-// Process messages from Arduino to track dot position
+// Process messages from Arduino
 function processArduinoMessage(message) {
   console.log(`Arduino says: ${message}`);
   
-  // Parse dot position from Arduino message
-  if (message.startsWith("Dot position:")) {
+  // Parse snake head position from Arduino message
+  if (message.includes("Snake head:")) {
     const match = message.match(/\((\d+),\s*(\d+)\)/);
     if (match) {
-      currentPosition.x = parseInt(match[1]) - 1; // Convert from 1-based to 0-based
-      currentPosition.y = parseInt(match[2]) - 1;
-      
-      // No need to track edges with wrap-around
-      console.log(`Dot tracked at (${currentPosition.x}, ${currentPosition.y})`);
+      snakePosition.headX = parseInt(match[1]);
+      snakePosition.headY = parseInt(match[2]);
+      console.log(`Snake head tracked at (${snakePosition.headX}, ${snakePosition.headY})`);
     }
   }
 }
@@ -134,26 +137,40 @@ function processArduinoMessage(message) {
 async function disconnectFromSerial() {
   console.log('Disconnecting from serial port...');
   
+  // Close the reader if it exists
+  if (serialReader) {
+    try {
+      await serialReader.cancel();
+      console.log('Serial reader canceled');
+    } catch (error) {
+      console.error('Error canceling serial reader:', error);
+    }
+    serialReader = null;
+  }
+  
+  // Close the writer if it exists
   if (serialWriter) {
     try {
       await serialWriter.close();
       console.log('Serial writer closed');
-      serialWriter = null;
     } catch (error) {
       console.error('Error closing serial writer:', error);
     }
+    serialWriter = null;
   }
   
+  // Close the port if it exists
   if (serialPort) {
     try {
       await serialPort.close();
       console.log('Serial port closed');
-      serialPort = null;
     } catch (error) {
       console.error('Error closing serial port:', error);
     }
+    serialPort = null;
   }
   
+  // Update state and UI
   serialConnected = false;
   document.getElementById('serial-status').textContent = 'Disconnected';
   document.getElementById('connect-serial').textContent = 'Connect Arduino';
@@ -165,13 +182,13 @@ async function disconnectFromSerial() {
 function handleDirectionInput(direction) {
   if (!direction) return;
   
-  // We no longer need edge detection since Arduino handles wrap-around
-  // Just check timing
+  // Check timing to prevent flooding commands
   const now = Date.now();
   if (now - lastCommandTime < MIN_COMMAND_INTERVAL) {
     return;
   }
   
+  // Set the input state
   inputStates[direction] = true;
   lastCommandTime = now;
   
@@ -179,14 +196,32 @@ function handleDirectionInput(direction) {
   sendSerialCommand(direction);
 }
 
+// Reset all direction input states
 function clearDirectionInputs() {
-  // Reset all input states
   inputStates.up = false;
   inputStates.down = false;
   inputStates.left = false;
   inputStates.right = false;
 }
 
+// Handle speed boost (when keys are held down or joystick pushed far)
+function handleSpeedBoost(activate) {
+  if (!serialConnected || !serialWriter) {
+    console.log('Cannot send speed command: Serial not connected');
+    return;
+  }
+  
+  try {
+    const command = activate ? 'F' : 'N'; // F for fast, N for normal
+    console.log(`Setting speed: ${activate ? 'FAST' : 'NORMAL'}`);
+    const encoder = new TextEncoder();
+    serialWriter.write(encoder.encode(command));
+  } catch (error) {
+    console.error('Error sending speed command:', error);
+  }
+}
+
+// Send direction command to Arduino
 async function sendSerialCommand(direction) {
   if (!serialConnected || !serialWriter) {
     console.log('Cannot send command: Serial not connected');
@@ -207,13 +242,13 @@ async function sendSerialCommand(direction) {
     console.log(`Sending serial command: ${command} (${direction})`);
     const encoder = new TextEncoder();
     await serialWriter.write(encoder.encode(command));
-    lastDirection = direction; // Update last direction
+    lastDirection = direction;
   } catch (error) {
     console.error('Error sending serial command:', error);
   }
 }
 
-// Controller template code (unchanged)
+// Gamepad controller templates
 const controllerTemplate = `
 <div>
   <div class="head"><div class="index"></div><div class="id"></div></div>
@@ -225,6 +260,7 @@ const controllerTemplate = `
   </div>
 </div>
 `;
+
 const axisTemplate = `
 <svg viewBox="-2.2 -2.2 4.4 4.4" width="128" height="128">
     <circle cx="0" cy="0" r="2" fill="none" stroke="#888" stroke-width="0.04" />
@@ -243,8 +279,9 @@ const buttonTemplate = `
 </svg>
 `;
 
+// Add a new gamepad to the UI
 function addGamepad(gamepad) {
-  console.log('add:', gamepad.index, gamepad.id);
+  console.log('Adding gamepad:', gamepad.index, gamepad.id);
   const elem = document.createElement('div');
   elem.innerHTML = controllerTemplate;
 
@@ -287,6 +324,7 @@ function addGamepad(gamepad) {
   gamepadsElem.appendChild(elem);
 }
 
+// Remove a gamepad from the UI
 function removeGamepad(gamepad) {
   const info = gamepadsByIndex[gamepad.index];
   if (info) {
@@ -295,6 +333,7 @@ function removeGamepad(gamepad) {
   }
 }
 
+// Add gamepad if not already tracked
 function addGamepadIfNew(gamepad) {
   const info = gamepadsByIndex[gamepad.index];
   if (!info) {
@@ -304,37 +343,40 @@ function addGamepadIfNew(gamepad) {
   }
 }
 
+// Event handlers for gamepad connection/disconnection
 function handleConnect(e) {
-  console.log('connect', e.gamepad.id);
+  console.log('Gamepad connected:', e.gamepad.id);
   addGamepadIfNew(e.gamepad);
 }
 
 function handleDisconnect(e) {
-  console.log('disconnect', e.gamepad.id);
+  console.log('Gamepad disconnected:', e.gamepad.id);
   removeGamepad(e.gamepad);
 }
 
-const t = String.fromCharCode(0x26AA);
-const f = String.fromCharCode(0x26AB);
-function onOff(v) {
-  return v ? t : f;
-}
-
-const keys = ['index', 'id', 'connected', 'mapping', /*'timestamp'*/];
+// Process gamepad controller inputs
 function processController(info) {
-  const {elem, gamepad, axes, buttons} = info;
-  const lines = [`gamepad  : ${gamepad.index}`];
+  const {gamepad, axes, buttons} = info;
+  
+  // Update UI elements
+  const keys = ['index', 'id', 'connected', 'mapping'];
   for (const key of keys) {
     info[key].textContent = gamepad[key];
   }
   
-  // Clear previous states if stick returns to neutral
+  // Process controller inputs
   let anyActive = false;
+  let shouldBoost = false;
   
   // Process left joystick input (axes 0-1)
   if (gamepad.axes.length >= 2) {
     const horizontalAxis = gamepad.axes[0];
     const verticalAxis = gamepad.axes[1];
+
+    // Check if joystick is pushed far enough for boost
+    if (Math.abs(verticalAxis) > 0.7 || Math.abs(horizontalAxis) > 0.7) {
+      shouldBoost = true;
+    }
     
     // Process joystick - prioritize the dominant direction (no diagonal)
     if (Math.abs(verticalAxis) > Math.abs(horizontalAxis)) {
@@ -346,7 +388,7 @@ function processController(info) {
         handleDirectionInput('down');
         anyActive = true;
       }
-    } else {
+    } else if (Math.abs(horizontalAxis) > AXIS_THRESHOLD) {
       // Horizontal movement is dominant
       if (horizontalAxis < -AXIS_THRESHOLD) {
         handleDirectionInput('left');
@@ -373,7 +415,7 @@ function processController(info) {
         handleDirectionInput('down');
         anyActive = true;
       }
-    } else {
+    } else if (Math.abs(horizontalAxis) > AXIS_THRESHOLD) {
       // Horizontal movement is dominant
       if (horizontalAxis < -AXIS_THRESHOLD) {
         handleDirectionInput('left');
@@ -405,63 +447,119 @@ function processController(info) {
     }
   }
   
-  // If no inputs are active, clear all states
-  if (!anyActive) {
+  // Check other action buttons for restart
+  if (gamepad.buttons.length >= 3 && gamepad.buttons[2] && gamepad.buttons[2].pressed) {
+    // X button (usually button 2) for restart
+    if (serialConnected && serialWriter) {
+      const encoder = new TextEncoder();
+      serialWriter.write(encoder.encode('X'));
+      console.log('Sending restart command from gamepad');
+    }
+  }
+  
+  // If any inputs are active and joystick is pushed far, activate boost
+  if (anyActive) {
+    handleSpeedBoost(shouldBoost);
+  } else {
+    // If no inputs are active, clear all states and reset speed
     clearDirectionInputs();
+    handleSpeedBoost(false);
   }
   
   // Update visualizations
   axes.forEach(({axis, value}, ndx) => {
     const off = ndx * 2;
-    axis.setAttributeNS(null, 'cx', gamepad.axes[off    ] * fudgeFactor);
-    axis.setAttributeNS(null, 'cy', gamepad.axes[off + 1] * fudgeFactor);
-    value.textContent = `${gamepad.axes[off].toFixed(2).padStart(5)},${gamepad.axes[off + 1].toFixed(2).padStart(5)}`;
+    if (off + 1 < gamepad.axes.length) {
+      axis.setAttributeNS(null, 'cx', gamepad.axes[off] * fudgeFactor);
+      axis.setAttributeNS(null, 'cy', gamepad.axes[off + 1] * fudgeFactor);
+      value.textContent = `${gamepad.axes[off].toFixed(2).padStart(5)},${gamepad.axes[off + 1].toFixed(2).padStart(5)}`;
+    }
   });
+  
   buttons.forEach(({circle, value}, ndx) => {
-    const button = gamepad.buttons[ndx];
-    circle.setAttributeNS(null, 'r', button.value * fudgeFactor);
-    circle.setAttributeNS(null, 'fill', button.pressed ? 'red' : 'gray');
-    value.textContent = `${button.value.toFixed(2)}`;
+    if (ndx < gamepad.buttons.length) {
+      const button = gamepad.buttons[ndx];
+      circle.setAttributeNS(null, 'r', button.value * fudgeFactor);
+      circle.setAttributeNS(null, 'fill', button.pressed ? 'red' : 'gray');
+      value.textContent = `${button.value.toFixed(2)}`;
+    }
   });
 }
 
+// Check for new gamepads
 function addNewPads() {
   const gamepads = navigator.getGamepads();
   for (let i = 0; i < gamepads.length; i++) {
-    const gamepad = gamepads[i]
+    const gamepad = gamepads[i];
     if (gamepad) {
       addGamepadIfNew(gamepad);
     }
   }
 }
 
+// Register gamepad event listeners
 window.addEventListener("gamepadconnected", handleConnect);
 window.addEventListener("gamepaddisconnected", handleDisconnect);
 
+// Main game loop
 function process() {
   runningElem.textContent = ((performance.now() * 0.001 * 60 | 0) % 100).toString().padStart(2, '0');
   addNewPads();  // some browsers add by polling, others by event
 
+  // Process all connected gamepads
   Object.values(gamepadsByIndex).forEach(processController);
+  
+  // Continue the game loop
   requestAnimationFrame(process);
 }
-requestAnimationFrame(process);
 
-// Track which keys are currently pressed
-const pressedKeys = new Set();
-let keyboardPollingInterval = null;
-const KEY_POLLING_RATE = 50; // Poll keyboard every 50ms (20 times per second)
-
+// Check if a specific key is pressed
 function isKeyPressed(key) {
   return pressedKeys.has(key);
 }
 
-// More responsive keyboard handling
+// Poll keyboard inputs
+function pollKeyboard() {
+  // Process only one key at a time - prioritize in this order
+  let direction = null;
+  
+  if (isKeyPressed('arrowup') || isKeyPressed('w')) {
+    direction = 'up';
+  } else if (isKeyPressed('arrowdown') || isKeyPressed('s')) {
+    direction = 'down';
+  } else if (isKeyPressed('arrowleft') || isKeyPressed('a')) {
+    direction = 'left';
+  } else if (isKeyPressed('arrowright') || isKeyPressed('d')) {
+    direction = 'right';
+  }
+  
+  if (direction) {
+    handleDirectionInput(direction);
+  } else if (keyboardPollingInterval) {
+    // No direction keys pressed, stop polling
+    clearInterval(keyboardPollingInterval);
+    keyboardPollingInterval = null;
+  }
+}
+
+// Check if any direction keys are pressed
+function hasDirectionKeysPressed() {
+  const directionKeys = ['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'];
+  return directionKeys.some(key => pressedKeys.has(key));
+}
+
+// Keyboard event handlers
 document.addEventListener('keydown', function(event) {
   const key = event.key.toLowerCase();
   
   // Skip if already pressed (avoid duplicates)
-  if (pressedKeys.has(key)) return;
+  if (pressedKeys.has(key)) {
+    // If a direction key is already pressed and held, activate fast mode
+    if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+      handleSpeedBoost(true);
+    }
+    return;
+  }
   
   // Add to pressed keys set
   pressedKeys.add(key);
@@ -501,6 +599,15 @@ document.addEventListener('keydown', function(event) {
       }
     }
   }
+
+  // X key to restart after game over
+  if (key === 'x') {
+    if (serialConnected && serialWriter) {
+      const encoder = new TextEncoder();
+      serialWriter.write(encoder.encode('X'));
+      console.log('Sending restart command');
+    }
+  }
 });
 
 document.addEventListener('keyup', function(event) {
@@ -511,6 +618,11 @@ document.addEventListener('keyup', function(event) {
   if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
     const keyElem = document.getElementById(`key-${key === 'arrowup' ? 'up' : key === 'arrowdown' ? 'down' : key === 'arrowleft' ? 'left' : key === 'arrowright' ? 'right' : key}`);
     if (keyElem) keyElem.classList.remove('active');
+    
+    // Set speed back to normal if all direction keys are released
+    if (!hasDirectionKeysPressed()) {
+      handleSpeedBoost(false);
+    }
   }
   
   // Stop polling if no direction keys are pressed
@@ -522,35 +634,23 @@ document.addEventListener('keyup', function(event) {
   }
 });
 
-function hasDirectionKeysPressed() {
-  const directionKeys = ['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'];
-  return directionKeys.some(key => pressedKeys.has(key));
-}
-
-function pollKeyboard() {
-  // Process only one key at a time - prioritize in this order
-  let direction = null;
-  
-  if (isKeyPressed('arrowup') || isKeyPressed('w')) {
-    direction = 'up';
-  } else if (isKeyPressed('arrowdown') || isKeyPressed('s')) {
-    direction = 'down';
-  } else if (isKeyPressed('arrowleft') || isKeyPressed('a')) {
-    direction = 'left';
-  } else if (isKeyPressed('arrowright') || isKeyPressed('d')) {
-    direction = 'right';
-  }
-  
-  if (direction) {
-    handleDirectionInput(direction);
-  } else if (keyboardPollingInterval) {
-    // No direction keys pressed, stop polling
-    clearInterval(keyboardPollingInterval);
-    keyboardPollingInterval = null;
-  }
-}
-
-// Add event listener for connect button
+// Initialize everything when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
-  document.getElementById('connect-serial').addEventListener('click', connectToSerial);
+  // Add connect button listener
+  const connectButton = document.getElementById('connect-serial');
+  if (connectButton) {
+    connectButton.addEventListener('click', connectToSerial);
+  }
+  
+  // Check if Web Serial API is available
+  if (!navigator.serial) {
+    console.error('Web Serial API not supported!');
+    document.getElementById('serial-status').textContent = 'API Not Supported';
+    if (connectButton) {
+      connectButton.disabled = true;
+    }
+  }
+  
+  // Start the game loop
+  requestAnimationFrame(process);
 });
