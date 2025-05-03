@@ -22,6 +22,7 @@ let snakePosition = {
 let currentScore = 0;
 let currentLevel = 1;
 let gameOver = false;
+let speedControlLastPressed = false;
 
 // Input states
 let inputStates = {
@@ -46,7 +47,7 @@ async function connectToSerial() {
   console.log('Attempting to connect to Arduino via Serial...');
   
   if (serialConnected) {
-    await disconnectFromSerial();
+    console.log('Already connected');
     return;
   }
   
@@ -71,10 +72,11 @@ async function connectToSerial() {
     serialConnected = true;
     document.getElementById('serial-status').textContent = 'Connected';
     document.getElementById('status-icon').textContent = '✅'; // Green checkmark
-    document.getElementById('connect-serial').textContent = 'Disconnect';
+    document.getElementById('connect-once').textContent = 'Connected';
+    document.getElementById('connect-once').disabled = true;
     
     console.log('Serial connection established successfully!');
-    updateGameStatus('Connected! Use controls to play.');
+    updateGameStatus('Connected! Use controls to play. To disconnect, refresh this page.');
   } catch (error) {
     console.error('Error connecting to serial port:', error);
     document.getElementById('serial-status').textContent = 'Connection Failed';
@@ -151,9 +153,15 @@ function processArduinoMessage(message) {
     updateLevelDisplay();
     updateGameStatus(`Level up! Now at level ${level}`);
   }
+  else if (message.startsWith("LEVEL_DOWN:")) {
+    const level = parseInt(message.substring(11));
+    currentLevel = level;
+    updateLevelDisplay();
+    updateGameStatus(`Level set to ${level}`);
+  }
   else if (message.startsWith("GAME_OVER:")) {
     gameOver = true;
-    updateGameStatus('Game Over! Press any button to restart.');
+    updateGameStatus('Game Over! Press space bar to restart.');
   }
   else if (message.startsWith("GAME_RESET")) {
     gameOver = false;
@@ -193,76 +201,6 @@ function updateLevelDisplay() {
 function updateGameStatus(message) {
   if (gameStatusElement) {
     gameStatusElement.textContent = message;
-  }
-}
-
-async function disconnectFromSerial() {
-  console.log('Disconnecting from serial port...');
-  
-  // First, update UI to prevent multiple disconnect attempts
-  serialConnected = false;
-  document.getElementById('serial-status').textContent = 'Disconnecting...';
-  document.getElementById('status-icon').textContent = '⏳'; // Hourglass while disconnecting
-  document.getElementById('connect-serial').disabled = true;
-  
-  try {
-    // Close the reader if it exists
-    if (serialReader) {
-      try {
-        await serialReader.cancel();
-        console.log('Serial reader canceled');
-      } catch (error) {
-        console.error('Error canceling serial reader:', error);
-      } finally {
-        // Important: always release the lock regardless of success/failure
-        try {
-          serialReader.releaseLock();
-        } catch (err) {
-          console.error('Error releasing reader lock:', err);
-        }
-        serialReader = null;
-      }
-    }
-    
-    // Close the writer if it exists
-    if (serialWriter) {
-      try {
-        await serialWriter.close();
-        console.log('Serial writer closed');
-      } catch (error) {
-        console.error('Error closing serial writer:', error);
-      } finally {
-        serialWriter = null;
-      }
-    }
-    
-    // Close the port if it exists
-    if (serialPort) {
-      try {
-        await serialPort.close();
-        console.log('Serial port closed');
-      } catch (error) {
-        console.error('Error closing serial port:', error);
-      } finally {
-        serialPort = null;
-      }
-    }
-    
-    // Update UI after successful disconnect
-    document.getElementById('serial-status').textContent = 'Disconnected';
-    document.getElementById('status-icon').textContent = '❌'; // Red cross
-    document.getElementById('connect-serial').textContent = 'Connect Arduino';
-    document.getElementById('connect-serial').disabled = false;
-    
-    console.log('Serial disconnection complete');
-    updateGameStatus('Disconnected from Arduino.');
-  } catch (error) {
-    console.error('Disconnect process failed:', error);
-    // Ensure UI is still updated even if disconnect fails
-    document.getElementById('serial-status').textContent = 'Disconnect Failed';
-    document.getElementById('status-icon').textContent = '⚠️'; // Warning
-    document.getElementById('connect-serial').textContent = 'Connect Arduino';
-    document.getElementById('connect-serial').disabled = false;
   }
 }
 
@@ -322,6 +260,23 @@ function sendRestartCommand() {
     serialWriter.write(encoder.encode('X'));
   } catch (error) {
     console.error('Error sending restart command:', error);
+  }
+}
+
+// Send speed control command
+function sendSpeedControlCommand(command) {
+  if (!serialConnected || !serialWriter) {
+    console.log('Cannot send speed control command: Serial not connected');
+    return;
+  }
+  
+  try {
+    const cmd = command === 'increase' ? '+' : '-';
+    console.log(`Sending speed ${command} command`);
+    const encoder = new TextEncoder();
+    serialWriter.write(encoder.encode(cmd));
+  } catch (error) {
+    console.error('Error sending speed control command:', error);
   }
 }
 
@@ -461,7 +416,7 @@ function createGamepadPlaceholder() {
         <ul>
           <li>WASD or Arrow Keys: Move snake</li>
           <li>Hold any direction: Speed boost</li>
-          <li>X/Y/A/B: Restart after game over</li>
+          <li>Space Bar: Restart after game over</li>
         </ul>
       </div>
     </div>
@@ -594,6 +549,25 @@ function processController(info) {
     }
   }
   
+  // Check L/ZL (buttons 4 and 6 on Pro Controller) for decrease speed
+  if ((gamepad.buttons[4] && gamepad.buttons[4].pressed) || 
+      (gamepad.buttons[6] && gamepad.buttons[6].pressed)) {
+    if (!speedControlLastPressed) {
+      speedControlLastPressed = true;
+      sendSpeedControlCommand('decrease');
+    }
+  } 
+  // Check R/ZR (buttons 5 and 7 on Pro Controller) for increase speed
+  else if ((gamepad.buttons[5] && gamepad.buttons[5].pressed) || 
+          (gamepad.buttons[7] && gamepad.buttons[7].pressed)) {
+    if (!speedControlLastPressed) {
+      speedControlLastPressed = true;
+      sendSpeedControlCommand('increase');
+    }
+  } else {
+    speedControlLastPressed = false;
+  }
+  
   // Check A/B/X/Y buttons for restart (0-3 on standard gamepads)
   if (gameOver) {
     for (let i = 0; i < 4 && i < gamepad.buttons.length; i++) {
@@ -712,9 +686,27 @@ document.addEventListener('keydown', function(event) {
   
   // Skip if already pressed (avoid duplicates)
   if (pressedKeys.has(key)) {
-    // If a direction key is already pressed and held, activate fast mode
+    // Only activate speed boost if the direction isn't opposite to current direction
     if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
-      handleSpeedBoost(true);
+      // Check if key direction matches current direction
+      let keyDirection = '';
+      switch (key) {
+        case 'w': case 'arrowup': keyDirection = 'up'; break;
+        case 's': case 'arrowdown': keyDirection = 'down'; break;
+        case 'a': case 'arrowleft': keyDirection = 'left'; break;
+        case 'd': case 'arrowright': keyDirection = 'right'; break;
+      }
+      
+      // Only boost if it's not opposite to the current direction
+      const oppositeDirections = {
+        'up': 'down',
+        'down': 'up',
+        'left': 'right',
+        'right': 'left'
+      };
+      if (lastDirection && oppositeDirections[lastDirection] !== keyDirection) {
+        handleSpeedBoost(true);
+      }
     }
     return;
   }
@@ -758,8 +750,8 @@ document.addEventListener('keydown', function(event) {
     }
   }
 
-  // X, Y, A, B keys to restart after game over
-  if (gameOver && ['x', 'y', 'a', 'b'].includes(key)) {
+  // Only space bar to restart after game over
+  if (gameOver && key === ' ') {
     sendRestartCommand();
   }
 });
@@ -791,7 +783,7 @@ document.addEventListener('keyup', function(event) {
 // Initialize everything when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
   // Add connect button listener
-  const connectButton = document.getElementById('connect-serial');
+  const connectButton = document.getElementById('connect-once');
   if (connectButton) {
     connectButton.addEventListener('click', connectToSerial);
   }

@@ -2,8 +2,8 @@
 #include "Modulino.h" // Include the Modulino library
 
 // Grid dimensions
-#define MAX_Y 8
 #define MAX_X 12
+#define MAX_Y 8
 
 // Game parameters
 #define INITIAL_SNAKE_LENGTH 3
@@ -24,6 +24,13 @@ int currentLevel = 1;
 int foodEaten = 0;
 int totalScore = 0;
 bool speedBoostActive = false;
+
+// Function declarations
+void decreaseLevel();
+void increaseLevel();
+void updateMoveInterval();
+void updateLevelDisplay();
+
 
 // Buzzer tones for food and game over
 #define FOOD_TONE 1000    // Hz
@@ -92,7 +99,7 @@ void setup() {
 
 void printInstructions() {
   Serial.println("===========================================");
-  Serial.println("  Arduino Uno R4 WiFi Snake Game");
+  Serial.println("  Arduino Uno R4 - Snake Game over Web Serial");
   Serial.println("===========================================");
   Serial.println("Controls:");
   Serial.println("- Button A / W / Up Arrow: Move Up");
@@ -100,7 +107,7 @@ void printInstructions() {
   Serial.println("- Button C / S / Down Arrow: Move Down");
   Serial.println("- A / Left Arrow: Move Left");
   Serial.println("- Hold any direction for speed boost!");
-  Serial.println("- Any A/B/X/Y button to restart after game over");
+  Serial.println("- Any A/B X/Y button to restart after game over");
   Serial.println("- Default D-Pad/Left Stick also works for movement");
   Serial.println("===========================================");
   Serial.println("Game Rules:");
@@ -117,30 +124,45 @@ void loop() {
   // Get current time once for optimization
   unsigned long currentTime = millis();
   
-  // Handle button presses
-  if (buttons.update()) {
-    // Directional controls
-    if (buttons.isPressed(0)) {      // Button A - Move up
-      setDirection(DIR_UP);
-      speedBoostActive = true;
-      // Turn ON button A LED when pressed
-      buttons.setLeds(true, false, false);
-    } else if (buttons.isPressed(1)) { // Button B - Move right
-      setDirection(DIR_RIGHT);
-      speedBoostActive = true;
-      // Turn ON button B LED when pressed
-      buttons.setLeds(false, true, false);
-    } else if (buttons.isPressed(2)) { // Button C - Move down
-      setDirection(DIR_DOWN);
-      speedBoostActive = true;
-      // Turn ON button C LED when pressed
-      buttons.setLeds(false, false, true);
-    } else {
-      // No buttons pressed - deactivate speed boost
-      speedBoostActive = false;
-      // Turn OFF all button LEDs
-      buttons.setLeds(false, false, false);
-    }
+// Handle button presses
+if (buttons.update()) {
+  // Button states
+  bool buttonAPressed = buttons.isPressed(0);
+  bool buttonBPressed = buttons.isPressed(1);
+  bool buttonCPressed = buttons.isPressed(2);
+  
+  // Update button LEDs to match press state
+  buttons.setLeds(buttonAPressed, buttonBPressed, buttonCPressed);
+  
+  // Button A (press) - decrease speed level
+  static bool buttonALastState = false;
+  if (buttonAPressed && !buttonALastState) {
+    decreaseLevel();
+    Serial.println("Button A pressed - Level decreased");
+  }
+  buttonALastState = buttonAPressed;
+  
+  // Button C (press) - increase speed level
+  static bool buttonCLastState = false;
+  if (buttonCPressed && !buttonCLastState) {
+    increaseLevel();
+    Serial.println("Button C pressed - Level increased");
+  }
+  buttonCLastState = buttonCPressed;
+  
+
+case '+': // Increase level
+  increaseLevel();
+  break;
+  
+case '-': // Decrease level
+  decreaseLevel();
+  break;
+
+
+  // Button B does nothing for now (future: pause)
+  // static bool buttonBLastState = false;
+  // buttonBLastState = buttonBPressed;
     
     // Game restart (any button press during game over)
     if (gameOver && (buttons.isPressed(0) || buttons.isPressed(1) || buttons.isPressed(2))) {
@@ -282,9 +304,9 @@ void updateMoveInterval() {
 void updateLevelDisplay() {
   pixels.clear();
   
-  // Set LEDs based on current level (green with 20% brightness - reduced from 30%)
+  // Set LEDs based on current level, green color with 5% brightness
   for (int i = 0; i < currentLevel; i++) {
-    pixels.set(i, GREEN, 20); // Using GREEN constant with reduced brightness
+    pixels.set(i, RED, 5);
   }
   
   pixels.show();
@@ -361,25 +383,61 @@ void moveSnake() {
   }
 }
 
-// Place food at a random empty position
+// Increase speed level
+void increaseLevel() {
+  if (currentLevel < MAX_SPEED_LEVEL) {
+    currentLevel++;
+    updateMoveInterval();
+    updateLevelDisplay();
+    Serial.print("LEVEL_UP:");
+    Serial.println(currentLevel);
+  }
+}
+
+// Decrease speed level
+void decreaseLevel() {
+  if (currentLevel > 1) {
+    currentLevel--;
+    updateMoveInterval();
+    updateLevelDisplay();
+    Serial.print("LEVEL_DOWN:");
+    Serial.println(currentLevel);
+  }
+}
+
 void placeFood() {
-  int attempts = 0;
-  bool validPosition = false;
+  // Find all empty cells first
+  bool grid[MAX_Y][MAX_X] = {false}; // false = empty, true = occupied
+  int emptyCount = MAX_X * MAX_Y;
   
-  while (!validPosition && attempts < 100) {
-    foodX = random(0, MAX_X);
-    foodY = random(0, MAX_Y);
-    
-    // Check if position is empty (not occupied by snake)
-    validPosition = true;
-    for (int i = 0; i < snakeLength; i++) {
-      if (snake[i].x == foodX && snake[i].y == foodY) {
-        validPosition = false;
-        break;
+  // Mark all cells occupied by snake
+  for (int i = 0; i < snakeLength; i++) {
+    if (snake[i].x >= 0 && snake[i].x < MAX_X && snake[i].y >= 0 && snake[i].y < MAX_Y) {
+      grid[snake[i].y][snake[i].x] = true;
+      emptyCount--;
+    }
+  }
+  
+  // If no empty cells, just return (game board is full)
+  if (emptyCount <= 0) return;
+  
+  // Pick a random empty cell index
+  int randomEmptyIndex = random(0, emptyCount);
+  
+  // Find that empty cell
+  int currentEmptyIndex = 0;
+  for (int y = 0; y < MAX_Y; y++) {
+    for (int x = 0; x < MAX_X; x++) {
+      if (!grid[y][x]) { // If cell is empty
+        if (currentEmptyIndex == randomEmptyIndex) {
+          // Found our random empty cell
+          foodX = x;
+          foodY = y;
+          return;
+        }
+        currentEmptyIndex++;
       }
     }
-    
-    attempts++;
   }
 }
 

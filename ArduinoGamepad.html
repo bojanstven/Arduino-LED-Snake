@@ -10,13 +10,15 @@
   <script src="script.js" defer></script>
 </head>
 <body>
+  <h1>Arduino Snake Game v1.1</h1>
+
   <div class="serial-connection">
     <div class="connection-container">
       <div class="logo-container">
         <img src="arduino.svg" alt="Arduino Logo" class="arduino-logo">
       </div>
       <div class="button-status-container">
-        <button id="connect-serial" class="connect-btn">Connect Arduino</button>
+        <button id="connect-once" class="connect-btn">Connect Arduino</button>
         <div class="status-container">
           <span id="status-icon">❌</span>
           <span id="serial-status">Not Connected</span>
@@ -39,8 +41,7 @@
     </div>
   </div>
 
-  <h1>Snake Game Controller</h1>
-  <div>running: <span id="running"></span></div>
+  <div style="display: none;">running: <span id="running"></span></div>
   <div id="gamepads"></div>
 
   <div class="controls-container">
@@ -70,8 +71,8 @@
         <h3>Keyboard</h3>
         <ul>
           <li><strong>WASD</strong> or <strong>Arrow Keys</strong>: Move snake</li>
-          <li><strong>Hold</strong> any direction key for speed boost</li>
-          <li><strong>X/Y/A/B</strong> keys: Restart after game over</li>
+          <li><strong>Hold direction</strong>: Speed boost</li>
+          <li><strong>Space Bar</strong>: Restart after game over</li>
         </ul>
       </div>
       <div class="instruction-column">
@@ -79,12 +80,14 @@
         <ul>
           <li><strong>D-Pad</strong> or <strong>Left Stick</strong>: Move snake</li>
           <li>Push stick <strong>harder</strong> for speed boost</li>
-          <li><strong>A/B/X/Y</strong> buttons: Restart after game over</li>
-        </ul>
+          <li><strong>L/ZL buttons</strong>: Decrease speed level</li>
+          <li><strong>R/ZR buttons</strong>: Increase speed level</li>
+          <li><strong>A/B/X/Y buttons</strong>: Restart</li>
+          </ul>
       </div>
     </div>
     <div class="instruction-footer">
-      <p>Level up by eating 5 food items. Don't hit yourself!</p>
+      <p>Level up by eating 5 food items. There are no walls - you wrap around. Don't hit yourself!</p>
     </div>
   </div>
 </body>

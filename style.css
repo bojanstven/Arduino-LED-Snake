@@ -29,6 +29,7 @@ h1 {
   margin: 10px auto;
   max-width: 90%;
   border-radius: 5px;
+  width: 600px;
 }
 
 .gamepad-placeholder {
@@ -133,7 +134,7 @@ h1 {
   padding: 20px;
   margin: 10px auto;
   border-radius: 5px;
-  width: 400px; /* Increased width to accommodate logo */
+  width: 600px; /* Increased width to accommodate logo */
   text-align: center;
 }
 
@@ -173,7 +174,7 @@ h1 {
   cursor: pointer;
   border-radius: 4px;
   transition: background-color 0.3s;
-  width: 120px; /* Fixed width to maintain dimensions */
+  width: 160px; /* Fixed width to maintain dimensions */
 }
 
 .connect-btn:hover {
@@ -222,6 +223,7 @@ h1 {
 #score-value, #level-value {
   font-size: 18px;
   font-weight: bold;
+  margin-right: 10px;
 }
 
 .game-status {
@@ -348,6 +350,7 @@ h1 {
 
 .instruction-column {
   flex: 1;
+  min-width: 220px;
 }
 
 .instructions ul {
@@ -359,7 +362,12 @@ h1 {
 .instructions li {
   margin: 8px 0;
   line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
+
 
 .instructions strong {
   color: #4CAF50;
