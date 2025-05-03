@@ -14,11 +14,14 @@ let lastDirection = null;
 let lastCommandTime = 0;
 const MIN_COMMAND_INTERVAL = 100; // ms between commands
 
-// Current snake position tracking
+// Game state tracking
 let snakePosition = {
   headX: 0,
   headY: 0
 };
+let currentScore = 0;
+let currentLevel = 1;
+let gameOver = false;
 
 // Input states
 let inputStates = {
@@ -33,17 +36,21 @@ const pressedKeys = new Set();
 let keyboardPollingInterval = null;
 const KEY_POLLING_RATE = 50; // Poll keyboard every 50ms (20 times per second)
 
+// Game stats elements
+const scoreElement = document.getElementById('score-value');
+const levelElement = document.getElementById('level-value');
+const gameStatusElement = document.getElementById('game-status');
+
 // Serial connection functions
 async function connectToSerial() {
-  // If already connected, disconnect first
+  console.log('Attempting to connect to Arduino via Serial...');
+  
   if (serialConnected) {
     await disconnectFromSerial();
     return;
   }
   
   try {
-    console.log('Attempting to connect to Arduino via Serial...');
-    
     // Request port access from the user
     serialPort = await navigator.serial.requestPort();
     
@@ -54,7 +61,8 @@ async function connectToSerial() {
     // Create writer for output
     const textEncoder = new TextEncoder();
     const writableStream = serialPort.writable;
-    serialWriter = writableStream.getWriter();
+    const writer = writableStream.getWriter();
+    serialWriter = writer;
     
     // Setup reader for incoming messages
     setupSerialReader();
@@ -62,12 +70,16 @@ async function connectToSerial() {
     // Update UI and status
     serialConnected = true;
     document.getElementById('serial-status').textContent = 'Connected';
+    document.getElementById('status-icon').textContent = '✅'; // Green checkmark
     document.getElementById('connect-serial').textContent = 'Disconnect';
     
     console.log('Serial connection established successfully!');
+    updateGameStatus('Connected! Use controls to play.');
   } catch (error) {
     console.error('Error connecting to serial port:', error);
     document.getElementById('serial-status').textContent = 'Connection Failed';
+    document.getElementById('status-icon').textContent = '❌'; // Red cross
+    updateGameStatus('Connection failed. Please try again.');
   }
 }
 
@@ -110,7 +122,11 @@ async function setupSerialReader() {
       } catch (error) {
         console.error('Error reading from serial port:', error);
       } finally {
-        serialReader.releaseLock();
+        try {
+          serialReader.releaseLock();
+        } catch (err) {
+          console.error('Error releasing reader lock:', err);
+        }
       }
     } catch (error) {
       console.error('Serial port reading error:', error);
@@ -121,7 +137,32 @@ async function setupSerialReader() {
 
 // Process messages from Arduino
 function processArduinoMessage(message) {
-  console.log(`Arduino says: ${message}`);
+  console.log(`Arduino: ${message}`);
+  
+  // Parse special message formats
+  if (message.startsWith("SCORE:")) {
+    const score = parseInt(message.substring(6));
+    currentScore = score;
+    updateScoreDisplay();
+  } 
+  else if (message.startsWith("LEVEL_UP:")) {
+    const level = parseInt(message.substring(9));
+    currentLevel = level;
+    updateLevelDisplay();
+    updateGameStatus(`Level up! Now at level ${level}`);
+  }
+  else if (message.startsWith("GAME_OVER:")) {
+    gameOver = true;
+    updateGameStatus('Game Over! Press any button to restart.');
+  }
+  else if (message.startsWith("GAME_RESET")) {
+    gameOver = false;
+    currentScore = 0;
+    currentLevel = 1;
+    updateScoreDisplay();
+    updateLevelDisplay();
+    updateGameStatus('New game started. Good luck!');
+  }
   
   // Parse snake head position from Arduino message
   if (message.includes("Snake head:")) {
@@ -134,48 +175,95 @@ function processArduinoMessage(message) {
   }
 }
 
+// Update the score display
+function updateScoreDisplay() {
+  if (scoreElement) {
+    scoreElement.textContent = currentScore;
+  }
+}
+
+// Update the level display
+function updateLevelDisplay() {
+  if (levelElement) {
+    levelElement.textContent = currentLevel;
+  }
+}
+
+// Update game status message
+function updateGameStatus(message) {
+  if (gameStatusElement) {
+    gameStatusElement.textContent = message;
+  }
+}
+
 async function disconnectFromSerial() {
   console.log('Disconnecting from serial port...');
   
-  // Close the reader if it exists
-  if (serialReader) {
-    try {
-      await serialReader.cancel();
-      console.log('Serial reader canceled');
-    } catch (error) {
-      console.error('Error canceling serial reader:', error);
-    }
-    serialReader = null;
-  }
-  
-  // Close the writer if it exists
-  if (serialWriter) {
-    try {
-      await serialWriter.close();
-      console.log('Serial writer closed');
-    } catch (error) {
-      console.error('Error closing serial writer:', error);
-    }
-    serialWriter = null;
-  }
-  
-  // Close the port if it exists
-  if (serialPort) {
-    try {
-      await serialPort.close();
-      console.log('Serial port closed');
-    } catch (error) {
-      console.error('Error closing serial port:', error);
-    }
-    serialPort = null;
-  }
-  
-  // Update state and UI
+  // First, update UI to prevent multiple disconnect attempts
   serialConnected = false;
-  document.getElementById('serial-status').textContent = 'Disconnected';
-  document.getElementById('connect-serial').textContent = 'Connect Arduino';
+  document.getElementById('serial-status').textContent = 'Disconnecting...';
+  document.getElementById('status-icon').textContent = '⏳'; // Hourglass while disconnecting
+  document.getElementById('connect-serial').disabled = true;
   
-  console.log('Serial disconnection complete');
+  try {
+    // Close the reader if it exists
+    if (serialReader) {
+      try {
+        await serialReader.cancel();
+        console.log('Serial reader canceled');
+      } catch (error) {
+        console.error('Error canceling serial reader:', error);
+      } finally {
+        // Important: always release the lock regardless of success/failure
+        try {
+          serialReader.releaseLock();
+        } catch (err) {
+          console.error('Error releasing reader lock:', err);
+        }
+        serialReader = null;
+      }
+    }
+    
+    // Close the writer if it exists
+    if (serialWriter) {
+      try {
+        await serialWriter.close();
+        console.log('Serial writer closed');
+      } catch (error) {
+        console.error('Error closing serial writer:', error);
+      } finally {
+        serialWriter = null;
+      }
+    }
+    
+    // Close the port if it exists
+    if (serialPort) {
+      try {
+        await serialPort.close();
+        console.log('Serial port closed');
+      } catch (error) {
+        console.error('Error closing serial port:', error);
+      } finally {
+        serialPort = null;
+      }
+    }
+    
+    // Update UI after successful disconnect
+    document.getElementById('serial-status').textContent = 'Disconnected';
+    document.getElementById('status-icon').textContent = '❌'; // Red cross
+    document.getElementById('connect-serial').textContent = 'Connect Arduino';
+    document.getElementById('connect-serial').disabled = false;
+    
+    console.log('Serial disconnection complete');
+    updateGameStatus('Disconnected from Arduino.');
+  } catch (error) {
+    console.error('Disconnect process failed:', error);
+    // Ensure UI is still updated even if disconnect fails
+    document.getElementById('serial-status').textContent = 'Disconnect Failed';
+    document.getElementById('status-icon').textContent = '⚠️'; // Warning
+    document.getElementById('connect-serial').textContent = 'Connect Arduino';
+    document.getElementById('connect-serial').disabled = false;
+  }
 }
 
 // Handle inputs with immediate command sending
@@ -218,6 +306,22 @@ function handleSpeedBoost(activate) {
     serialWriter.write(encoder.encode(command));
   } catch (error) {
     console.error('Error sending speed command:', error);
+  }
+}
+
+// Send restart command
+function sendRestartCommand() {
+  if (!serialConnected || !serialWriter) {
+    console.log('Cannot send restart command: Serial not connected');
+    return;
+  }
+  
+  try {
+    console.log('Sending restart command');
+    const encoder = new TextEncoder();
+    serialWriter.write(encoder.encode('X'));
+  } catch (error) {
+    console.error('Error sending restart command:', error);
   }
 }
 
@@ -322,6 +426,9 @@ function addGamepad(gamepad) {
     connected: elem.querySelector('.connected'),
   };
   gamepadsElem.appendChild(elem);
+  
+  // Update game status
+  updateGameStatus('Gamepad connected! Ready to play.');
 }
 
 // Remove a gamepad from the UI
@@ -330,11 +437,51 @@ function removeGamepad(gamepad) {
   if (info) {
     delete gamepadsByIndex[gamepad.index];
     info.elem.parentElement.removeChild(info.elem);
+    
+    // Update game status
+    updateGameStatus('Gamepad disconnected. You can use keyboard controls.');
+    
+    // Create placeholder gamepad display if there are no other gamepads
+    if (Object.keys(gamepadsByIndex).length === 0) {
+      createGamepadPlaceholder();
+    }
   }
+}
+
+// Create a placeholder gamepad display when no gamepads are connected
+function createGamepadPlaceholder() {
+  const placeholderElem = document.createElement('div');
+  placeholderElem.className = 'gamepad-placeholder';
+  placeholderElem.innerHTML = `
+    <div class="placeholder-message">
+      <div class="placeholder-icon">🎮</div>
+      <div class="placeholder-text">
+        <p>No gamepad detected.</p>
+        <p>Connect a gamepad or use keyboard controls:</p>
+        <ul>
+          <li>WASD or Arrow Keys: Move snake</li>
+          <li>Hold any direction: Speed boost</li>
+          <li>X/Y/A/B: Restart after game over</li>
+        </ul>
+      </div>
+    </div>
+  `;
+  
+  // Add placeholder ID for easy removal later
+  placeholderElem.id = 'gamepad-placeholder';
+  
+  // Add to the gamepads container
+  gamepadsElem.appendChild(placeholderElem);
 }
 
 // Add gamepad if not already tracked
 function addGamepadIfNew(gamepad) {
+  // Remove placeholder if it exists
+  const placeholder = document.getElementById('gamepad-placeholder');
+  if (placeholder) {
+    placeholder.parentElement.removeChild(placeholder);
+  }
+  
   const info = gamepadsByIndex[gamepad.index];
   if (!info) {
     addGamepad(gamepad);
@@ -447,13 +594,13 @@ function processController(info) {
     }
   }
   
-  // Check other action buttons for restart
-  if (gamepad.buttons.length >= 3 && gamepad.buttons[2] && gamepad.buttons[2].pressed) {
-    // X button (usually button 2) for restart
-    if (serialConnected && serialWriter) {
-      const encoder = new TextEncoder();
-      serialWriter.write(encoder.encode('X'));
-      console.log('Sending restart command from gamepad');
+  // Check A/B/X/Y buttons for restart (0-3 on standard gamepads)
+  if (gameOver) {
+    for (let i = 0; i < 4 && i < gamepad.buttons.length; i++) {
+      if (gamepad.buttons[i] && gamepad.buttons[i].pressed) {
+        sendRestartCommand();
+        break;
+      }
     }
   }
   
@@ -489,10 +636,21 @@ function processController(info) {
 // Check for new gamepads
 function addNewPads() {
   const gamepads = navigator.getGamepads();
+  let gamepadFound = false;
+  
   for (let i = 0; i < gamepads.length; i++) {
     const gamepad = gamepads[i];
     if (gamepad) {
+      gamepadFound = true;
       addGamepadIfNew(gamepad);
+    }
+  }
+  
+  // If no gamepads were found, ensure we have a placeholder
+  if (!gamepadFound && Object.keys(gamepadsByIndex).length === 0) {
+    const placeholder = document.getElementById('gamepad-placeholder');
+    if (!placeholder) {
+      createGamepadPlaceholder();
     }
   }
 }
@@ -600,13 +758,9 @@ document.addEventListener('keydown', function(event) {
     }
   }
 
-  // X key to restart after game over
-  if (key === 'x') {
-    if (serialConnected && serialWriter) {
-      const encoder = new TextEncoder();
-      serialWriter.write(encoder.encode('X'));
-      console.log('Sending restart command');
-    }
+  // X, Y, A, B keys to restart after game over
+  if (gameOver && ['x', 'y', 'a', 'b'].includes(key)) {
+    sendRestartCommand();
   }
 });
 
@@ -642,13 +796,29 @@ document.addEventListener('DOMContentLoaded', function() {
     connectButton.addEventListener('click', connectToSerial);
   }
   
+  // Set initial status icon
+  const statusIcon = document.getElementById('status-icon');
+  if (statusIcon) {
+    statusIcon.textContent = '❌'; // Start with red cross
+  }
+  
+  // Initialize score and level displays
+  updateScoreDisplay();
+  updateLevelDisplay();
+  
+  // Create gamepad placeholder for initial display
+  createGamepadPlaceholder();
+  
   // Check if Web Serial API is available
   if (!navigator.serial) {
     console.error('Web Serial API not supported!');
     document.getElementById('serial-status').textContent = 'API Not Supported';
+    updateGameStatus('Web Serial API not supported in this browser. Try Chrome or Edge.');
     if (connectButton) {
       connectButton.disabled = true;
     }
+  } else {
+    updateGameStatus('Connect to Arduino to start playing.');
   }
   
   // Start the game loop

@@ -4,17 +4,42 @@
   <meta charset="UTF-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Arduino Gamepad</title>
+  <title>Arduino Snake</title>
+  <link rel="icon" type="image/x-icon" href="Favicon.Arduino.ico">
   <link rel="stylesheet" href="style.css">
   <script src="script.js" defer></script>
 </head>
 <body>
   <div class="serial-connection">
-    <button id="connect-serial" class="connect-btn">Connect Arduino</button>
-    <div id="serial-status">Not Connected</div>
+    <div class="connection-container">
+      <div class="logo-container">
+        <img src="arduino.svg" alt="Arduino Logo" class="arduino-logo">
+      </div>
+      <div class="button-status-container">
+        <button id="connect-serial" class="connect-btn">Connect Arduino</button>
+        <div class="status-container">
+          <span id="status-icon">❌</span>
+          <span id="serial-status">Not Connected</span>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <h1>Arduino Gamepad controls over Web Serial API</h1>
+  <div class="game-info">
+    <div class="score-display">
+      <span class="info-label">Score:</span>
+      <span id="score-value">0</span>
+    </div>
+    <div class="level-display">
+      <span class="info-label">Level:</span>
+      <span id="level-value">1</span>
+    </div>
+    <div class="game-status">
+      <span id="game-status">Connect to Arduino to start playing.</span>
+    </div>
+  </div>
+
+  <h1>Snake Game Controller</h1>
   <div>running: <span id="running"></span></div>
   <div id="gamepads"></div>
 
@@ -35,6 +60,31 @@
         <div class="key" id="key-down">↓</div>
         <div class="key" id="key-right">→</div>
       </div>
+    </div>
+  </div>
+  
+  <div class="instructions">
+    <h2>Game Controls:</h2>
+    <div class="instructions-columns">
+      <div class="instruction-column">
+        <h3>Keyboard</h3>
+        <ul>
+          <li><strong>WASD</strong> or <strong>Arrow Keys</strong>: Move snake</li>
+          <li><strong>Hold</strong> any direction key for speed boost</li>
+          <li><strong>X/Y/A/B</strong> keys: Restart after game over</li>
+        </ul>
+      </div>
+      <div class="instruction-column">
+        <h3>Gamepad</h3>
+        <ul>
+          <li><strong>D-Pad</strong> or <strong>Left Stick</strong>: Move snake</li>
+          <li>Push stick <strong>harder</strong> for speed boost</li>
+          <li><strong>A/B/X/Y</strong> buttons: Restart after game over</li>
+        </ul>
+      </div>
+    </div>
+    <div class="instruction-footer">
+      <p>Level up by eating 5 food items. Don't hit yourself!</p>
     </div>
   </div>
 </body>

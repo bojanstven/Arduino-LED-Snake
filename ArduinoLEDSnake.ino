@@ -8,7 +8,8 @@
 // Game parameters
 #define INITIAL_SNAKE_LENGTH 3
 #define DEFAULT_SPEED 250 // milliseconds between moves (4 per second)
-#define FAST_SPEED 125 // fast speed when button held
+#define FOOD_TO_LEVEL_UP 5 // Food items needed to increase speed (5 items)
+#define FAST_SPEED_MULTIPLIER 0.5 // 50% faster when holding down buttons
 
 // Direction constants
 #define DIR_UP 0
@@ -16,12 +17,29 @@
 #define DIR_DOWN 2
 #define DIR_LEFT 3
 
-// Initialize the LED matrix object
+// Speed levels
+#define MAX_SPEED_LEVEL 8
+#define SPEED_INCREMENT 25 // ms per level (lower = faster)
+int currentLevel = 1;
+int foodEaten = 0;
+int totalScore = 0;
+bool speedBoostActive = false;
+
+// Buzzer tones for food and game over
+#define FOOD_TONE 1000    // Hz
+#define FOOD_DURATION 50  // ms
+
+// Game over tones
+#define GAME_OVER_TONE_1 988  // B5
+#define GAME_OVER_TONE_2 784  // G5
+#define GAME_OVER_TONE_3 659  // E5
+#define GAME_OVER_DURATION 150 // ms
+
+// Initialize objects
 ArduinoLEDMatrix matrix;
 ModulinoButtons buttons;
-
-// Game state. 0 is empty, 1 is snake body, 2 is food
-uint8_t grid[MAX_Y][MAX_X] = {0}; // Initialize all to empty
+ModulinoPixels pixels;
+ModulinoBuzzer buzzer;
 
 // Snake representation
 struct SnakeSegment {
@@ -39,105 +57,111 @@ int nextDirection = DIR_RIGHT;
 int foodX;
 int foodY;
 
-// Game timing variables
+// Game timing and state
 unsigned long lastMoveTime = 0;
 unsigned long moveInterval = DEFAULT_SPEED;
-bool fastMove = false;
 bool gameOver = false;
 
 void setup() {
+  // Initialize serial for debugging
   Serial.begin(9600);
-  Serial.println("Arduino Snake Game Starting");
   
+  // Initialize all Modulino components
   Modulino.begin();
+  
+  // Initialize buttons - all LEDs OFF initially
   buttons.begin();
-  buttons.setLeds(true, true, true);
+  buttons.setLeds(false, false, false);
   
+  // Initialize pixels
+  pixels.begin();
+  updateLevelDisplay();
+  
+  // Initialize buzzer
+  buzzer.begin();
+  
+  // Initialize LED matrix
   matrix.begin();
+  
+  // Initialize the game
+  resetGame();
+  
+  // Print game instructions
+  printInstructions();
+}
 
-  // Initialize snake in the left half of the screen
-  initializeSnake();
-  
-  // Place initial food
-  placeFood();
-  
-  // Display the initial game state
-  updateDisplay();
-  
-  Serial.println("Ready to receive serial commands");
+void printInstructions() {
+  Serial.println("===========================================");
+  Serial.println("  Arduino Uno R4 WiFi Snake Game");
+  Serial.println("===========================================");
+  Serial.println("Controls:");
+  Serial.println("- Button A / W / Up Arrow: Move Up");
+  Serial.println("- Button B / D / Right Arrow: Move Right");
+  Serial.println("- Button C / S / Down Arrow: Move Down");
+  Serial.println("- A / Left Arrow: Move Left");
+  Serial.println("- Hold any direction for speed boost!");
+  Serial.println("- Any A/B/X/Y button to restart after game over");
+  Serial.println("- Default D-Pad/Left Stick also works for movement");
+  Serial.println("===========================================");
+  Serial.println("Game Rules:");
+  Serial.println("- Eat food to grow and earn points");
+  Serial.println("- Every 5 food items increases the level/speed");
+  Serial.println("- Green LEDs show current level (1-8)");
+  Serial.println("- Don't crash into yourself!");
+  Serial.println("===========================================");
+  Serial.println("Game Starting...");
+  Serial.println("");
 }
 
 void loop() {
-  // Check for button presses on Arduino
-  buttons.update();
-
-  if (buttons.isPressed(0)) {      // Button A - Move up
-    setDirection(DIR_UP);
-  } else if (buttons.isPressed(1)) { // Button B - Move right
-    setDirection(DIR_RIGHT);
-  } else if (buttons.isPressed(2)) { // Button C - Move down
-    setDirection(DIR_DOWN);
-  }
+  // Get current time once for optimization
+  unsigned long currentTime = millis();
   
-  // Check for serial input
-  if (Serial.available() > 0) {
-    char command = Serial.read();
+  // Handle button presses
+  if (buttons.update()) {
+    // Directional controls
+    if (buttons.isPressed(0)) {      // Button A - Move up
+      setDirection(DIR_UP);
+      speedBoostActive = true;
+      // Turn ON button A LED when pressed
+      buttons.setLeds(true, false, false);
+    } else if (buttons.isPressed(1)) { // Button B - Move right
+      setDirection(DIR_RIGHT);
+      speedBoostActive = true;
+      // Turn ON button B LED when pressed
+      buttons.setLeds(false, true, false);
+    } else if (buttons.isPressed(2)) { // Button C - Move down
+      setDirection(DIR_DOWN);
+      speedBoostActive = true;
+      // Turn ON button C LED when pressed
+      buttons.setLeds(false, false, true);
+    } else {
+      // No buttons pressed - deactivate speed boost
+      speedBoostActive = false;
+      // Turn OFF all button LEDs
+      buttons.setLeds(false, false, false);
+    }
     
-    switch (command) {
-      case 'U': // Up
-      case 'u':
-      case 'w':
-      case 'W':
-        setDirection(DIR_UP);
-        break;
-        
-      case 'D': // Down
-      case 'd':
-      case 's':
-      case 'S':
-        setDirection(DIR_DOWN);
-        break;
-        
-      case 'L': // Left
-      case 'l':
-      case 'a':
-      case 'A':
-        setDirection(DIR_LEFT);
-        break;
-        
-      case 'R': // Right
-      case 'r':
-        setDirection(DIR_RIGHT);
-        break;
-        
-      // Fast move command
-      case 'F': // Fast
-      case 'f':
-        fastMove = true;
-        moveInterval = FAST_SPEED;
-        break;
-        
-      // Normal speed command
-      case 'N': // Normal
-      case 'n':
-        fastMove = false;
-        moveInterval = DEFAULT_SPEED;
-        break;
-        
-      case 'X': // Restart game after game over
-        if (gameOver) {
-          resetGame();
-        }
-        break;
-        
-      default:
-        break;
+    // Game restart (any button press during game over)
+    if (gameOver && (buttons.isPressed(0) || buttons.isPressed(1) || buttons.isPressed(2))) {
+      resetGame();
     }
   }
   
+  // Process serial commands
+  while (Serial.available() > 0) {
+    char command = Serial.read();
+    processCommand(command);
+  }
+  
+  // Calculate actual move interval including speed boost if active
+  unsigned long actualMoveInterval = moveInterval;
+  if (speedBoostActive) {
+    actualMoveInterval = moveInterval * FAST_SPEED_MULTIPLIER;
+  }
+  
   // Update snake movement based on timing
-  unsigned long currentTime = millis();
-  if (!gameOver && (currentTime - lastMoveTime >= moveInterval)) {
+  if (!gameOver && (currentTime - lastMoveTime >= actualMoveInterval)) {
     lastMoveTime = currentTime;
     
     // Update direction for next move
@@ -149,67 +173,67 @@ void loop() {
     // Update display
     updateDisplay();
   }
+  
+  // Update display for animations even when not moving
+  static unsigned long lastAnimationTime = 0;
+  if ((gameOver || true) && (currentTime - lastAnimationTime >= 150)) { // Always update for food blinking
+    lastAnimationTime = currentTime;
+    updateDisplay();
+  }
 }
 
-void initializeSnake() {
-  // Clear grid
-  for (int y = 0; y < MAX_Y; y++) {
-    for (int x = 0; x < MAX_X; x++) {
-      grid[y][x] = 0;
-    }
-  }
-  
-  // Initialize snake in the left half of the screen, moving right
-  int startX = MAX_X / 4;
-  int startY = MAX_Y / 2;
-  
-  for (int i = 0; i < snakeLength; i++) {
-    snake[i].x = startX - i;
-    snake[i].y = startY;
-    
-    // Ensure initial position is valid
-    if (snake[i].x < 0) {
-      snake[i].x += MAX_X; // Wrap around for initial positions
-    }
-    
-    // Mark on grid
-    grid[snake[i].y][snake[i].x] = 1;
-  }
-  
-  // Set initial direction
-  currentDirection = DIR_RIGHT;
-  nextDirection = DIR_RIGHT;
-}
-
-void placeFood() {
-  int attempts = 0;
-  bool validPosition = false;
-  
-  // Find an empty spot for food
-  while (!validPosition && attempts < 100) {
-    foodX = random(0, MAX_X);
-    foodY = random(0, MAX_Y);
-    
-    // Check if the spot is empty
-    if (grid[foodY][foodX] == 0) {
-      validPosition = true;
-      grid[foodY][foodX] = 2; // Mark as food
+// Process input commands
+void processCommand(char command) {
+  switch (command) {
+    case 'U': // Up
+    case 'u':
+    case 'w':
+    case 'W':
+      setDirection(DIR_UP);
+      speedBoostActive = true; // Activate speed boost when key held
+      break;
       
-      Serial.print("Food placed at: (");
-      Serial.print(foodX);
-      Serial.print(", ");
-      Serial.print(foodY);
-      Serial.println(")");
-    }
-    
-    attempts++;
-  }
-  
-  if (!validPosition) {
-    Serial.println("WARNING: Could not place food after 100 attempts");
+    case 'D': // Down
+    case 'd':
+    case 's':
+    case 'S':
+      setDirection(DIR_DOWN);
+      speedBoostActive = true; // Activate speed boost when key held
+      break;
+      
+    case 'L': // Left
+    case 'l':
+    case 'a':
+    case 'A':
+      setDirection(DIR_LEFT);
+      speedBoostActive = true; // Activate speed boost when key held
+      break;
+      
+    case 'R': // Right
+    case 'r':
+      setDirection(DIR_RIGHT);
+      speedBoostActive = true; // Activate speed boost when key held
+      break;
+      
+    case 'N': // Normal speed
+    case 'n':
+      speedBoostActive = false;
+      break;
+      
+    case 'X': // Restart game after game over
+    case 'x':
+    case 'Y': // Additional restart keys
+    case 'y':
+    case 'B': // Any game controller button
+    case 'b':
+      if (gameOver) {
+        resetGame();
+      }
+      break;
   }
 }
 
+// Set snake direction (prevents 180-degree turns)
 void setDirection(int newDirection) {
   // Prevent 180-degree turns
   if ((currentDirection == DIR_UP && newDirection == DIR_DOWN) ||
@@ -222,6 +246,51 @@ void setDirection(int newDirection) {
   nextDirection = newDirection;
 }
 
+// Increase speed level when eating enough food
+void checkLevelUp() {
+  if (foodEaten >= FOOD_TO_LEVEL_UP && currentLevel < MAX_SPEED_LEVEL) {
+    currentLevel++;
+    foodEaten = 0; // Reset food counter
+    updateMoveInterval();
+    updateLevelDisplay();
+    
+    // Extra feedback for level up
+    buzzer.tone(FOOD_TONE * 2, FOOD_DURATION * 2);
+    Serial.print("LEVEL_UP:");
+    Serial.println(currentLevel);
+  }
+}
+
+// Update move interval based on level
+void updateMoveInterval() {
+  // Base speed is 250ms, each level reduces by SPEED_INCREMENT
+  moveInterval = DEFAULT_SPEED - ((currentLevel - 1) * SPEED_INCREMENT);
+  
+  // Ensure minimum speed isn't too fast
+  if (moveInterval < 50) {
+    moveInterval = 50; // Minimum 50ms between moves (20fps)
+  }
+  
+  Serial.print("SPEED:");
+  Serial.print(currentLevel);
+  Serial.print(",");
+  Serial.print(moveInterval);
+  Serial.println("ms");
+}
+
+// Update level display on Modulino pixels
+void updateLevelDisplay() {
+  pixels.clear();
+  
+  // Set LEDs based on current level (green with 20% brightness - reduced from 30%)
+  for (int i = 0; i < currentLevel; i++) {
+    pixels.set(i, GREEN, 20); // Using GREEN constant with reduced brightness
+  }
+  
+  pixels.show();
+}
+
+// Move the snake
 void moveSnake() {
   // Calculate new head position based on current direction
   int newHeadX = snake[0].x;
@@ -243,74 +312,116 @@ void moveSnake() {
   }
   
   // Check if new head position hits snake body
-  for (int i = 0; i < snakeLength; i++) {
+  for (int i = 1; i < snakeLength; i++) {
     if (newHeadX == snake[i].x && newHeadY == snake[i].y) {
       gameOver = true;
-      Serial.println("Game Over: Snake collided with itself");
+      playGameOverSound();
+      Serial.println("GAME_OVER:Snake collision");
+      Serial.print("FINAL_SCORE:");
+      Serial.println(totalScore);
       return;
     }
   }
   
   // Check if new head position is food
-  bool ateFood = (grid[newHeadY][newHeadX] == 2);
+  bool ateFood = (newHeadX == foodX && newHeadY == foodY);
   
   // Move snake body (shift segments backwards)
-  if (!ateFood) {
-    // Clear the tail position on the grid
-    grid[snake[snakeLength - 1].y][snake[snakeLength - 1].x] = 0;
-    
-    // Move body segments
-    for (int i = snakeLength - 1; i > 0; i--) {
-      snake[i].x = snake[i - 1].x;
-      snake[i].y = snake[i - 1].y;
-    }
-  } else {
-    // Grow snake
-    if (snakeLength < MAX_SNAKE_LENGTH) {
-      snakeLength++;
-      Serial.print("Snake grew! New length: ");
-      Serial.println(snakeLength);
-      
-      // Copy last segment to new segment
-      for (int i = snakeLength - 1; i > 0; i--) {
-        snake[i].x = snake[i - 1].x;
-        snake[i].y = snake[i - 1].y;
-      }
-    }
-    
-    // Place new food
-    placeFood();
+  for (int i = snakeLength - 1; i > 0; i--) {
+    snake[i].x = snake[i - 1].x;
+    snake[i].y = snake[i - 1].y;
   }
   
   // Update head position
   snake[0].x = newHeadX;
   snake[0].y = newHeadY;
-  grid[newHeadY][newHeadX] = 1; // Mark as snake
+  
+  // If food was eaten, grow snake and place new food
+  if (ateFood) {
+    playFoodSound();
+    
+    if (snakeLength < MAX_SNAKE_LENGTH) {
+      snakeLength++;
+      foodEaten++;
+      totalScore++; // Increment total score
+      
+      // Send score to serial for browser console
+      Serial.print("SCORE:");
+      Serial.println(totalScore);
+      Serial.print("FOOD:");
+      Serial.print(foodEaten);
+      Serial.print("/");
+      Serial.println(FOOD_TO_LEVEL_UP);
+      
+      // Check if we should level up
+      checkLevelUp();
+    }
+    
+    placeFood();
+  }
 }
 
+// Place food at a random empty position
+void placeFood() {
+  int attempts = 0;
+  bool validPosition = false;
+  
+  while (!validPosition && attempts < 100) {
+    foodX = random(0, MAX_X);
+    foodY = random(0, MAX_Y);
+    
+    // Check if position is empty (not occupied by snake)
+    validPosition = true;
+    for (int i = 0; i < snakeLength; i++) {
+      if (snake[i].x == foodX && snake[i].y == foodY) {
+        validPosition = false;
+        break;
+      }
+    }
+    
+    attempts++;
+  }
+}
+
+// Update the LED matrix display
 void updateDisplay() {
-  // Clear the display grid first
+  // Clear the display grid
   uint8_t displayGrid[MAX_Y][MAX_X] = {0};
   
-  // Draw snake
-  for (int i = 0; i < snakeLength; i++) {
-    if (snake[i].x >= 0 && snake[i].x < MAX_X && snake[i].y >= 0 && snake[i].y < MAX_Y) {
+  if (gameOver) {
+    // Game over display - blink snake
+    bool showSnake = (millis() / 500) % 2 == 0;
+    
+    if (showSnake) {
+      // Draw snake
+      for (int i = 0; i < snakeLength; i++) {
+        displayGrid[snake[i].y][snake[i].x] = 1;
+      }
+      
+      // Draw border to indicate game over
+      for (int x = 0; x < MAX_X; x++) {
+        displayGrid[0][x] = 1;            // Top border
+        displayGrid[MAX_Y-1][x] = 1;      // Bottom border
+      }
+      for (int y = 0; y < MAX_Y; y++) {
+        displayGrid[y][0] = 1;            // Left border
+        displayGrid[y][MAX_X-1] = 1;      // Right border
+      }
+    } else {
+      // Always show head during blink off state
+      displayGrid[snake[0].y][snake[0].x] = 1;
+    }
+  } else {
+    // Normal gameplay
+    
+    // Draw snake
+    for (int i = 0; i < snakeLength; i++) {
       displayGrid[snake[i].y][snake[i].x] = 1;
     }
-  }
-  
-  // Draw food
-  if (!gameOver) {
-    displayGrid[foodY][foodX] = 1;
-  }
-  
-  // If game is over, make the snake blink
-  if (gameOver && (millis() / 500) % 2 == 0) {
-    // Clear display during blink
-    for (int y = 0; y < MAX_Y; y++) {
-      for (int x = 0; x < MAX_X; x++) {
-        displayGrid[y][x] = 0;
-      }
+    
+    // Draw food (blinking)
+    if ((millis() / 200) % 2 == 0) { // Blink the food every 200ms
+      displayGrid[foodY][foodX] = 1;
     }
   }
   
@@ -318,36 +429,57 @@ void updateDisplay() {
   matrix.renderBitmap(displayGrid, MAX_Y, MAX_X);
 }
 
-void resetGame() {
-  // Reset game state
-  snakeLength = INITIAL_SNAKE_LENGTH;
-  gameOver = false;
-  moveInterval = DEFAULT_SPEED;
-  fastMove = false;
-  
-  // Initialize snake and food
-  initializeSnake();
-  placeFood();
-  
-  // Display the game
-  updateDisplay();
-  
-  Serial.println("Game Reset");
+// Play sound when food is eaten
+void playFoodSound() {
+  buzzer.tone(FOOD_TONE, FOOD_DURATION);
 }
 
-void printGameState() {
-  Serial.print("Snake head: (");
-  Serial.print(snake[0].x);
-  Serial.print(", ");
-  Serial.print(snake[0].y);
-  Serial.print(") Length: ");
-  Serial.print(snakeLength);
-  Serial.print(" Dir: ");
+// Play descending tones for game over
+void playGameOverSound() {
+  buzzer.tone(GAME_OVER_TONE_1, GAME_OVER_DURATION);
+  delay(GAME_OVER_DURATION);
+  buzzer.tone(GAME_OVER_TONE_2, GAME_OVER_DURATION);
+  delay(GAME_OVER_DURATION);
+  buzzer.tone(GAME_OVER_TONE_3, GAME_OVER_DURATION);
+}
+
+// Reset the game
+void resetGame() {
+  // Reset game state
+  gameOver = false;
+  snakeLength = INITIAL_SNAKE_LENGTH;
+  currentDirection = DIR_RIGHT;
+  nextDirection = DIR_RIGHT;
   
-  switch (currentDirection) {
-    case DIR_UP: Serial.println("UP"); break;
-    case DIR_RIGHT: Serial.println("RIGHT"); break;
-    case DIR_DOWN: Serial.println("DOWN"); break;
-    case DIR_LEFT: Serial.println("LEFT"); break;
+  // Reset level and counters
+  currentLevel = 1;
+  foodEaten = 0;
+  totalScore = 0;
+  speedBoostActive = false;
+  
+  updateMoveInterval();
+  updateLevelDisplay();
+  
+  // Turn off all button LEDs
+  buttons.setLeds(false, false, false);
+  
+  // Initialize snake in the left half of the screen
+  for (int i = 0; i < snakeLength; i++) {
+    snake[i].x = (MAX_X / 4) - i;
+    snake[i].y = MAX_Y / 2;
+    
+    // Ensure initial position is valid (wrap around if needed)
+    if (snake[i].x < 0) {
+      snake[i].x += MAX_X;
+    }
   }
+  
+  // Place initial food
+  placeFood();
+  
+  // Update display
+  updateDisplay();
+  
+  // Log game reset
+  Serial.println("GAME_RESET");
 }
